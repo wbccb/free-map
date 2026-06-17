@@ -29,20 +29,23 @@
         </button>
       </div>
       <div v-if="placeSearchResults.length" class="place-search__results">
-        <button
+        <article
           v-for="(place, index) in placeSearchResults"
           :key="place.id"
-          type="button"
           class="place-search__item"
           :class="{ 'place-search__item--active': place.id === selectedSearchPlaceId }"
-          @click="selectSearchPlace(place)"
         >
-          <span class="place-search__index">{{ index + 1 }}</span>
-          <span class="place-search__content">
-            <strong>{{ place.name }}</strong>
-            <em>最近地铁：{{ place.nearestMetroStation }} · {{ formatDistance(place.distanceToMetroMeters) }}</em>
-          </span>
-        </button>
+          <button type="button" class="place-search__select" @click="selectSearchPlace(place)">
+            <span class="place-search__index">{{ index + 1 }}</span>
+            <span class="place-search__content">
+              <strong>{{ place.name }}</strong>
+              <em>最近地铁：{{ place.nearestMetroStation }} · {{ formatDistance(place.distanceToMetroMeters) }}</em>
+            </span>
+          </button>
+          <button type="button" class="place-search__create" @click="createMarkerFromSearchPlace(place)">
+            创建Marker
+          </button>
+        </article>
       </div>
     </section>
 
@@ -1822,6 +1825,68 @@ export default defineComponent({
       this.mapStatus = `已定位到：${place.name}。`
       this.hasMapError = false
       this.logger.info('选择搜索结果并居中显示', place)
+    },
+    async createMarkerFromSearchPlace(place: SearchPlace) {
+      this.logger.info('开始从搜索结果创建 Marker', {
+        placeId: place.id,
+        name: place.name,
+        position: place.position,
+        nearestMetroStation: place.nearestMetroStation,
+        distanceToMetroMeters: place.distanceToMetroMeters,
+      })
+
+      if (!this.map || !isValidLngLat(place.position)) {
+        this.mapStatus = '无法用该搜索结果创建标记。'
+        this.hasMapError = true
+        this.logger.warn('从搜索结果创建 Marker 失败：地图不存在或坐标非法', {
+          hasMap: Boolean(this.map),
+          place,
+        })
+        return
+      }
+
+      const position: [number, number] = [place.position[0], place.position[1]]
+      const isInsideArea = await this.isInsideArea(position)
+      if (!isInsideArea) {
+        this.mapStatus = '搜索结果不在当前找房范围内，无法创建标记。'
+        this.hasMapError = true
+        this.logger.warn('从搜索结果创建 Marker 失败：位置超出范围', {
+          placeId: place.id,
+          name: place.name,
+          position,
+        })
+        return
+      }
+
+      this.placeSearchKeyword = ''
+      this.placeSearchResults = []
+      this.selectedSearchPlaceId = ''
+      this.showPlaceSearchHistory = false
+      this.clearPlaceSearchMarkers()
+      this.clearRoute()
+      this.clearPoiMarkers()
+      this.clearPendingMarker()
+
+      this.editingMarkerId = ''
+      this.pendingMarkerPosition = position
+      this.markerForm.pros = place.name
+      this.markerForm.cons = `最近地铁：${place.nearestMetroStation} · ${this.formatDistance(place.distanceToMetroMeters)}`
+      this.markerForm.isRejected = false
+      this.map.setCenter(position)
+      this.renderPendingMarker(position)
+      this.showMarkerDialog = true
+      this.mapStatus = `已基于搜索结果创建临时标记：${place.name}。`
+      this.hasMapError = false
+      this.logger.info('从搜索结果创建临时 Marker 并打开弹窗成功', {
+        placeId: place.id,
+        name: place.name,
+        position,
+        markerForm: {
+          pros: this.markerForm.pros,
+          cons: this.markerForm.cons,
+          isRejected: this.markerForm.isRejected,
+        },
+      })
     },
     async searchNearby(keyword: string) {
       if (!this.AMap || !this.map || !this.selectedMarker) {
